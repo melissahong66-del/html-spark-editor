@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import interact from 'interactjs'
-import type { ClipboardPayload, HistorySnapshot, LayerNode, OverlayRect, PropertyValues, ResizeDirection } from '../types/editor'
+import type { AlignmentGuide, ClipboardPayload, HistorySnapshot, LayerNode, OverlayRect, PropertyValues, ResizeDirection } from '../types/editor'
 import { assignFreshEditorIds } from '../utils/sanitizeHtml'
 import { ensureAbsolutePosition, getElementMetrics, getPropertyValues, removeLayoutSpacer } from '../utils/elementPosition'
 
@@ -9,7 +9,7 @@ const TEXT_TAGS = new Set([
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'SPAN', 'A', 'BUTTON', 'LI', 'LABEL',
   'STRONG', 'B', 'EM', 'I', 'U', 'S', 'SMALL', 'SUB', 'SUP', 'MARK', 'TIME',
   'ABBR', 'CITE', 'Q', 'BLOCKQUOTE', 'FIGCAPTION', 'TD', 'TH', 'DT', 'DD',
-  'CAPTION', 'LEGEND', 'CODE', 'PRE',
+  'CAPTION', 'LEGEND', 'CODE', 'PRE', 'OL', 'UL',
 ])
 const INLINE_FRAGMENT_TAGS = new Set([
   'SPAN', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'SMALL', 'SUB', 'SUP', 'MARK',
@@ -30,6 +30,9 @@ function isTextEditable(element: HTMLElement): boolean {
 }
 
 function normalizeTextBoxTarget(element: HTMLElement): HTMLElement {
+  if (element.tagName === 'LI' && element.parentElement && ['OL', 'UL'].includes(element.parentElement.tagName)) {
+    return element.parentElement
+  }
   const view = element.ownerDocument.defaultView
   if (!view || !INLINE_FRAGMENT_TAGS.has(element.tagName) || view.getComputedStyle(element).display !== 'inline') return element
   let current: HTMLElement | null = element
@@ -41,6 +44,39 @@ function normalizeTextBoxTarget(element: HTMLElement): HTMLElement {
   }
   return element
 }
+
+function beginNumberedListFromTypedText(element: HTMLElement): boolean {
+  if (element.querySelector('ol, ul')) return false
+  const text = element.innerText.replace(/\u00a0/g, ' ').trim()
+  const match = text.match(/^1[.、]\s*(.*)$/s)
+  if (!match) return false
+  const document = element.ownerDocument
+  const list = document.createElement('ol')
+  const first = document.createElement('li')
+  const second = document.createElement('li')
+  first.textContent = match[1]
+  if (!first.textContent) first.appendChild(document.createElement('br'))
+  second.appendChild(document.createElement('br'))
+  list.append(first, second)
+  assignFreshEditorIds(list)
+  element.replaceChildren(list)
+  const range = document.createRange()
+  range.selectNodeContents(second)
+  range.collapse(true)
+  const selection = document.defaultView?.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  return true
+}
+
+interface SnapTarget {
+  value: number
+  start: number
+  end: number
+  full?: boolean
+}
+
+const SNAP_THRESHOLD = 6
 const PIXEL_PROPERTIES = new Set([
   'fontSize', 'lineHeight', 'borderRadius', 'borderWidth',
   'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
@@ -73,6 +109,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
   const [lockAspect, setLockAspect] = useState(false)
   const [selectedTextCount, setSelectedTextCount] = useState(0)
   const [isTextEditing, setIsTextEditing] = useState(false)
+  const [guides, setGuides] = useState<AlignmentGuide[]>([])
   const selectedRef = useRef<HTMLElement | null>(null)
   const savedRange = useRef<Range | null>(null)
   const selectionPointerActive = useRef(false)
@@ -196,14 +233,65 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     const interaction = interact(selected, { context: selected.ownerDocument }).draggable({
       ignoreFrom: '[contenteditable="true"]',
       listeners: {
-        start: () => { ensureAbsolutePosition(selected); scheduleRefresh() },
+        start: () => { ensureAbsolutePosition(selected); setGuides([]); scheduleRefresh() },
         move: (event) => {
           const metrics = getElementMetrics(selected)
-          selected.style.left = `${metrics.x + event.dx}px`
-          selected.style.top = `${metrics.y + event.dy}px`
+          const view = selected.ownerDocument.defaultView
+          const currentRect = selected.getBoundingClientRect()
+          const proposed = {
+            left: currentRect.left + event.dx,
+            top: currentRect.top + event.dy,
+            right: currentRect.right + event.dx,
+            bottom: currentRect.bottom + event.dy,
+            width: currentRect.width,
+            height: currentRect.height,
+          }
+          const xTargets: SnapTarget[] = []
+          const yTargets: SnapTarget[] = []
+          if (view) {
+            xTargets.push({ value: view.innerWidth / 2, start: 0, end: view.innerHeight, full: true })
+            yTargets.push({ value: view.innerHeight / 2, start: 0, end: view.innerWidth, full: true })
+          }
+          Array.from(selected.parentElement?.children ?? []).forEach((sibling) => {
+            if (!(sibling instanceof selected.ownerDocument.defaultView!.HTMLElement) || sibling === selected) return
+            const style = view?.getComputedStyle(sibling)
+            if (!style || style.display === 'none' || style.visibility === 'hidden') return
+            const rect = sibling.getBoundingClientRect()
+            if (rect.width <= 0 || rect.height <= 0) return
+            ;[rect.left, rect.left + rect.width / 2, rect.right].forEach((value) => xTargets.push({ value, start: rect.top, end: rect.bottom }))
+            ;[rect.top, rect.top + rect.height / 2, rect.bottom].forEach((value) => yTargets.push({ value, start: rect.left, end: rect.right }))
+          })
+          const xAnchors = [proposed.left, proposed.left + proposed.width / 2, proposed.right]
+          const yAnchors = [proposed.top, proposed.top + proposed.height / 2, proposed.bottom]
+          let bestX: { delta: number; target: SnapTarget } | null = null
+          let bestY: { delta: number; target: SnapTarget } | null = null
+          xTargets.forEach((target) => xAnchors.forEach((anchor) => {
+            const delta = target.value - anchor
+            if (Math.abs(delta) <= SNAP_THRESHOLD && (!bestX || Math.abs(delta) < Math.abs(bestX.delta))) bestX = { delta, target }
+          }))
+          yTargets.forEach((target) => yAnchors.forEach((anchor) => {
+            const delta = target.value - anchor
+            if (Math.abs(delta) <= SNAP_THRESHOLD && (!bestY || Math.abs(delta) < Math.abs(bestY.delta))) bestY = { delta, target }
+          }))
+          const snapX = bestX as { delta: number; target: SnapTarget } | null
+          const snapY = bestY as { delta: number; target: SnapTarget } | null
+          selected.style.left = `${metrics.x + event.dx + (snapX?.delta ?? 0)}px`
+          selected.style.top = `${metrics.y + event.dy + (snapY?.delta ?? 0)}px`
+          const nextGuides: AlignmentGuide[] = []
+          if (snapX) nextGuides.push({
+            orientation: 'vertical', position: snapX.target.value,
+            start: snapX.target.full ? snapX.target.start : Math.min(proposed.top, snapX.target.start),
+            end: snapX.target.full ? snapX.target.end : Math.max(proposed.bottom, snapX.target.end),
+          })
+          if (snapY) nextGuides.push({
+            orientation: 'horizontal', position: snapY.target.value,
+            start: snapY.target.full ? snapY.target.start : Math.min(proposed.left, snapY.target.start),
+            end: snapY.target.full ? snapY.target.end : Math.max(proposed.right, snapY.target.end),
+          })
+          setGuides(nextGuides)
           scheduleRefresh()
         },
-        end: commit,
+        end: () => { setGuides([]); commit() },
       },
     })
     return () => { interaction.unset() }
@@ -378,6 +466,11 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
       }
       if (event.key === 'Escape' && editState.current) {
         event.preventDefault(); event.stopPropagation(); finishTextEdit(false)
+      } else if (event.key === 'Enter' && editState.current && beginNumberedListFromTypedText(editState.current.element)) {
+        event.preventDefault(); event.stopPropagation()
+        savedRange.current = null
+        setSelectedTextCount(0)
+        scheduleRefresh()
       } else if (event.key === 'Enter' && !editState.current && selectedRef.current && isTextEditable(selectedRef.current)) {
         event.preventDefault(); event.stopPropagation(); enterTextEdit(selectedRef.current)
       }
@@ -544,6 +637,31 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     commit()
   }, [commit, selected])
 
+  const toggleNumberedList = useCallback(() => {
+    if (!selected || !isTextEditable(selected)) return
+    const document = selected.ownerDocument
+    const view = document.defaultView
+    if (!view) return
+    const wasEditing = editState.current?.element === selected
+    if (!wasEditing) selected.contentEditable = 'true'
+    selected.focus({ preventScroll: true })
+    const selection = view.getSelection()
+    const range = savedRange.current && selected.contains(savedRange.current.commonAncestorContainer)
+      ? savedRange.current.cloneRange()
+      : document.createRange()
+    if (!savedRange.current || !selected.contains(range.commonAncestorContainer)) range.selectNodeContents(selected)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.execCommand('insertOrderedList', false)
+    selected.querySelectorAll('ol, li').forEach((element) => {
+      if (!element.hasAttribute('data-editor-id')) assignFreshEditorIds(element)
+    })
+    if (!wasEditing) selected.removeAttribute('contenteditable')
+    savedRange.current = null
+    setSelectedTextCount(0)
+    commit()
+  }, [commit, selected])
+
   const startResize = useCallback((direction: ResizeDirection) => {
     if (!selected) return
     const metrics = ensureAbsolutePosition(selected)
@@ -617,9 +735,9 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
   useEffect(() => () => { observer.current?.disconnect(); cancelAnimationFrame(raf.current) }, [])
 
   return {
-    selected, properties, layers, selectionRect, hoverRect, lockAspect, setLockAspect, selectedTextCount, isTextEditing,
+    selected, properties, layers, selectionRect, hoverRect, guides, lockAspect, setLockAspect, selectedTextCount, isTextEditing,
     bindDocument, captureSnapshot, restoreSnapshot, selectById, clearSelection: () => selectElement(null),
-    updateProperty, transformTextCase, commitProperty: commit, startResize, moveResize, endResize,
+    updateProperty, transformTextCase, toggleNumberedList, commitProperty: commit, startResize, moveResize, endResize,
     remove, copy, paste, changeZIndex, nudge, refresh: scheduleRefresh,
   }
 }

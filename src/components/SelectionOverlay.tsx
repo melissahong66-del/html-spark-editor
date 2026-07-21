@@ -1,9 +1,10 @@
 import { useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
-import type { OverlayRect, ResizeDirection } from '../types/editor'
+import type { AlignmentGuide, OverlayRect, ResizeDirection } from '../types/editor'
 
 interface Props {
   selection: OverlayRect | null
   hover: OverlayRect | null
+  guides: AlignmentGuide[]
   editing: boolean
   onResizeStart: (direction: ResizeDirection) => void
   onResizeMove: (dx: number, dy: number, shiftKey: boolean) => void
@@ -12,7 +13,7 @@ interface Props {
 
 const DIRECTIONS: ResizeDirection[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
-export function SelectionOverlay({ selection, editing, onResizeStart, onResizeMove, onResizeEnd }: Props) {
+export function SelectionOverlay({ selection, guides, editing, onResizeStart, onResizeMove, onResizeEnd }: Props) {
   const cleanupDrag = useRef<(() => void) | null>(null)
 
   useEffect(() => () => cleanupDrag.current?.(), [])
@@ -60,6 +61,13 @@ export function SelectionOverlay({ selection, editing, onResizeStart, onResizeMo
   const visibleDirections = compact ? DIRECTIONS.filter((direction) => direction.length === 2) : DIRECTIONS
 
   return <>
+    {guides.map((guide, index) => <div
+      key={`${guide.orientation}-${guide.position}-${index}`}
+      className={`alignment-guide alignment-guide-${guide.orientation}`}
+      style={guide.orientation === 'vertical'
+        ? { left: guide.position, top: guide.start, height: Math.max(1, guide.end - guide.start) }
+        : { top: guide.position, left: guide.start, width: Math.max(1, guide.end - guide.start) }}
+    />)}
     {selection && <div className={`selection-overlay${editing ? ' selection-overlay-editing' : ''}`} style={selection}>
       {!editing && visibleDirections.map((direction) => <div
         key={direction}

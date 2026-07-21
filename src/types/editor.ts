@@ -36,6 +36,22 @@ export interface OverlayRect {
   height: number
 }
 
+export interface AlignmentGuide {
+  orientation: 'vertical' | 'horizontal'
+  position: number
+  start: number
+  end: number
+}
+
+export type ExportIssueKind = 'garbled-text' | 'broken-image' | 'empty-link' | 'out-of-canvas'
+
+export interface ExportIssue {
+  kind: ExportIssueKind
+  title: string
+  count: number
+  details: string[]
+}
+
 export interface ClipboardPayload {
   html: string
   parentId: string | null

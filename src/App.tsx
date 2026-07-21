@@ -2,12 +2,13 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { Toolbar } from './components/Toolbar'
 import { EditorCanvas } from './components/EditorCanvas'
 import { PropertiesPanel } from './components/PropertiesPanel'
+import { ExportCheckDialog } from './components/ExportCheckDialog'
 import { useHistory } from './hooks/useHistory'
 import { useIframeEditor } from './hooks/useIframeEditor'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { parseImportedHtml } from './utils/htmlParser'
-import { buildExportHtml, downloadHtml } from './utils/exportHtml'
-import type { HistorySnapshot, ImportedDocument } from './types/editor'
+import { buildExportHtml, downloadHtml, inspectExportDocument } from './utils/exportHtml'
+import type { ExportIssue, HistorySnapshot, ImportedDocument } from './types/editor'
 
 export default function App() {
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -15,6 +16,7 @@ export default function App() {
   const [srcDoc, setSrcDoc] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [exportIssues, setExportIssues] = useState<ExportIssue[] | null>(null)
   const history = useHistory(50)
 
   const handleCommit = useCallback((snapshot: HistorySnapshot) => history.push(snapshot), [history.push])
@@ -48,7 +50,7 @@ export default function App() {
     }
   }
 
-  const exportFile = () => {
+  const performExport = () => {
     const document = iframeRef.current?.contentDocument
     if (!imported || !document) return
     try {
@@ -58,16 +60,29 @@ export default function App() {
     }
   }
 
+  const exportFile = () => {
+    const document = iframeRef.current?.contentDocument
+    if (!imported || !document) return
+    const issues = inspectExportDocument(document)
+    if (issues.length > 0) {
+      setExportIssues(issues)
+      return
+    }
+    performExport()
+  }
+
   return <div className="app-shell">
     <Toolbar hasDocument={Boolean(imported)} hasSelection={Boolean(editor.selected)} canUndo={history.canUndo} canRedo={history.canRedo}
       onImport={importFile} onUndo={undo} onRedo={redo} onCopy={editor.copy} onDelete={editor.remove}
       onMoveUp={() => editor.changeZIndex(1)} onMoveDown={() => editor.changeZIndex(-1)} onExport={exportFile} />
     {(notice || error) && <div className={`notice ${error ? 'error' : ''}`}><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setNotice(null); setError(null) }}>×</button></div>}
     <div className="editor-layout">
-      <EditorCanvas iframeRef={iframeRef} srcDoc={srcDoc} selectionRect={editor.selectionRect} hoverRect={editor.hoverRect} isTextEditing={editor.isTextEditing}
+      <EditorCanvas iframeRef={iframeRef} srcDoc={srcDoc} selectionRect={editor.selectionRect} hoverRect={editor.hoverRect} guides={editor.guides} isTextEditing={editor.isTextEditing}
         onLoad={editor.bindDocument} onResizeStart={editor.startResize} onResizeMove={editor.moveResize} onResizeEnd={editor.endResize} />
       <PropertiesPanel values={editor.properties} lockAspect={editor.lockAspect} onLockAspect={editor.setLockAspect}
-        selectedTextCount={editor.selectedTextCount} onChange={editor.updateProperty} onTransformCase={editor.transformTextCase} onCommit={editor.commitProperty} />
+        selectedTextCount={editor.selectedTextCount} onChange={editor.updateProperty} onTransformCase={editor.transformTextCase}
+        onToggleNumberedList={editor.toggleNumberedList} onCommit={editor.commitProperty} />
     </div>
+    {exportIssues && <ExportCheckDialog issues={exportIssues} onBack={() => setExportIssues(null)} onContinue={() => { setExportIssues(null); performExport() }} />}
   </div>
 }
