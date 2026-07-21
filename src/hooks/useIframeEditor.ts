@@ -477,7 +477,11 @@ export function useIframeEditor({ iframeRef, onCommit, onReady, outerSelectionMo
         target = resolveSelectableTarget(target)
       }
       if (target && !UNSELECTABLE.has(target.tagName)) {
-        selectElement(target)
+        if (!outerSelectionModeRef.current && selectedRef.current === target && isTextEditable(target)) {
+          enterTextEdit(target)
+        } else {
+          selectElement(target)
+        }
       } else {
         selectElement(null)
       }
@@ -556,7 +560,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady, outerSelectionMo
         savedRange.current = null
         setSelectedTextCount(0)
         scheduleRefresh()
-      } else if (event.key === 'Enter' && !editState.current && selectedRef.current && isTextEditable(selectedRef.current)) {
+      } else if ((event.key === 'Enter' || event.key === 'F2') && !editState.current && selectedRef.current && isTextEditable(selectedRef.current)) {
         event.preventDefault(); event.stopPropagation(); enterTextEdit(selectedRef.current)
       }
     }
