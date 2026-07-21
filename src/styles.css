@@ -12,6 +12,7 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 .toolbar-brand { font-weight: 700; margin-right: 9px; color: #17213a; }
 .toolbar-divider { height: 24px; width: 1px; background: #e1e4ea; margin: 0 3px; }
 .toolbar-spacer { flex: 1; }
+.toolbar button.active-mode { color: white; border-color: #7c3aed; background: #7c3aed; box-shadow: 0 0 0 2px rgb(124 58 237 / 18%); }
 .notice { min-height: 34px; flex: 0 0 34px; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 14px; font-size: 13px; color: #7a5200; background: #fff7d6; border-bottom: 1px solid #f1df9a; }
 .notice.error { color: #9d2222; background: #ffeded; border-color: #f4c3c3; }
 .notice button { padding: 0 5px; border: 0; background: transparent; font-size: 18px; color: inherit; }
@@ -44,7 +45,9 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 .alignment-guide-horizontal { height: 1px; transform: translateY(-.5px); }
 .hover-overlay { border: 1px dashed #65a1ff; background: rgb(54 126 255 / 5%); }
 .selection-overlay { border: 2px solid #1677ff; }
-.selection-overlay-editing { border: 2px solid #1677ff; }
+.selection-overlay-editing { border: 0; outline: 2px solid #1677ff; outline-offset: 0; }
+.selection-overlay-container { border-color: #7c3aed; border-style: dashed; }
+.selection-overlay-container .resize-handle::after { border-color: #7c3aed; }
 .resize-handle { position: absolute; width: 16px; height: 16px; box-sizing: border-box; border: 0; background: transparent; pointer-events: auto; touch-action: none; }
 .resize-handle::after { content: ''; position: absolute; left: 3px; top: 3px; width: 10px; height: 10px; box-sizing: border-box; border: 2px solid #1677ff; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgb(0 70 180 / 25%); }
 .handle-nw { left: -13px; top: -13px; cursor: nwse-resize; }.handle-n { left: 50%; top: -13px; transform: translateX(-50%); cursor: ns-resize; }.handle-ne { right: -13px; top: -13px; cursor: nesw-resize; }
@@ -74,6 +77,8 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 .case-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .case-buttons button { height: 29px; padding: 0 8px; }
 .numbered-list-button { width: 100%; height: 29px; padding: 0 9px; text-align: left; }
+.list-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.list-buttons .numbered-list-button { width: auto; flex: 1 1 82px; }
 .font-size-field { margin-bottom: 9px; }
 .size-stepper { display: grid; grid-template-columns: 31px 1fr 31px; }
 .size-stepper button { height: 29px; padding: 0; border-radius: 0; }

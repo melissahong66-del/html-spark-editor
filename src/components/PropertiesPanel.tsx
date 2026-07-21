@@ -24,6 +24,7 @@ interface Props {
   onChange: (name: keyof PropertyValues, value: string) => void
   onTransformCase: (mode: 'upper' | 'lower') => void
   onToggleNumberedList: () => void
+  onToggleBulletList: () => void
   onCommit: () => void
 }
 
@@ -75,7 +76,7 @@ function ColorField({ label, name, value, recentColors, onChange, onCommit, onRe
   </div>
 }
 
-export function PropertiesPanel({ values, lockAspect, selectedTextCount, onLockAspect, onChange, onTransformCase, onToggleNumberedList, onCommit }: Props) {
+export function PropertiesPanel({ values, lockAspect, selectedTextCount, onLockAspect, onChange, onTransformCase, onToggleNumberedList, onToggleBulletList, onCommit }: Props) {
   const [boxOpen, setBoxOpen] = useState(true)
   const [recentColors, setRecentColors] = useState(loadRecentColors)
   const rememberColor = (color: string) => {
@@ -131,7 +132,7 @@ export function PropertiesPanel({ values, lockAspect, selectedTextCount, onLockA
         <button onClick={() => onTransformCase('upper')} title="转换为英文大写">大写</button>
         <button onClick={() => onTransformCase('lower')} title="转换为英文小写">小写</button>
       </span></div>
-      <div className="property-field"><span>列表</span><button className="numbered-list-button" onClick={onToggleNumberedList} title="转换为自动编号列表">1. 自动编号</button></div>
+      <div className="property-field"><span>列表</span><div className="list-buttons"><button className="numbered-list-button" onClick={onToggleNumberedList} title="转换为自动编号列表">1. 编号</button><button className="numbered-list-button" onClick={onToggleBulletList} title="转换为项目符号列表">• 项目符号</button></div></div>
       <div className="property-field"><span>对齐</span><span className="align-buttons">
         {([['left', '左'], ['center', '中'], ['right', '右'], ['justify', '齐']] as const).map(([value, label]) => <button key={value} className={values.textAlign === value || (value === 'left' && values.textAlign === 'start') ? 'active' : ''} onClick={() => setAndCommit('textAlign', value)}>{label}</button>)}
       </span></div>

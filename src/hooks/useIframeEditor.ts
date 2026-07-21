@@ -45,13 +45,71 @@ function normalizeTextBoxTarget(element: HTMLElement): HTMLElement {
   return element
 }
 
-function beginNumberedListFromTypedText(element: HTMLElement): boolean {
+function isMultiItemLayoutContainer(element: HTMLElement): boolean {
+  const view = element.ownerDocument.defaultView
+  if (!view) return false
+  const visibleChildren = Array.from(element.children).filter((child): child is HTMLElement => {
+    if (!(child instanceof view.HTMLElement)) return false
+    const style = view.getComputedStyle(child)
+    const rect = child.getBoundingClientRect()
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0
+  })
+  if (visibleChildren.length < 2) return false
+  const independentChildren = visibleChildren.filter((child) => {
+    const style = view.getComputedStyle(child)
+    return style.position === 'absolute' || style.position === 'fixed'
+      || (style.display !== 'inline' && style.display !== 'contents')
+  })
+  return independentChildren.length >= 2
+}
+
+function findLayoutContainer(element: HTMLElement | null): HTMLElement | null {
+  let current = element
+  while (current && current !== element?.ownerDocument.body) {
+    if (current.hasAttribute('data-editor-id') && isMultiItemLayoutContainer(current)) return current
+    current = current.parentElement
+  }
+  return null
+}
+
+function resolveSelectableTarget(rawTarget: HTMLElement | null): HTMLElement | null {
+  if (!rawTarget) return null
+  const identified = rawTarget.hasAttribute('data-editor-id')
+    ? rawTarget
+    : rawTarget.closest<HTMLElement>('[data-editor-id]')
+  if (!identified) return null
+  const normalized = normalizeTextBoxTarget(identified)
+  // A wrapper containing several independent boxes is page layout, not a PPT
+  // object. Clicking its empty area should deselect instead of moving all boxes.
+  if (isMultiItemLayoutContainer(normalized)) {
+    return identified !== normalized && !isMultiItemLayoutContainer(identified) ? identified : null
+  }
+  return normalized
+}
+
+function beginListFromTypedText(element: HTMLElement): boolean {
   if (element.querySelector('ol, ul')) return false
-  const text = element.innerText.replace(/\u00a0/g, ' ').trim()
-  const match = text.match(/^1[.、]\s*(.*)$/s)
-  if (!match) return false
   const document = element.ownerDocument
-  const list = document.createElement('ol')
+  const selection = document.defaultView?.getSelection()
+  let lineElement = element
+  let current = selection?.anchorNode instanceof document.defaultView!.HTMLElement
+    ? selection.anchorNode
+    : selection?.anchorNode?.parentElement
+  while (current && current !== element) {
+    const parent = current.parentElement
+    if (parent === element) {
+      const display = document.defaultView?.getComputedStyle(current).display
+      if (display && display !== 'inline' && display !== 'contents') lineElement = current
+      break
+    }
+    current = parent
+  }
+  const text = lineElement.innerText.replace(/\u00a0/g, ' ').trim()
+  const numberedMatch = text.match(/^1(?:[.．、])?\s*(.*)$/s)
+  const bulletMatch = text.match(/^[-*•]\s*(.*)$/s)
+  const match = numberedMatch ?? bulletMatch
+  if (!match) return false
+  const list = document.createElement(numberedMatch ? 'ol' : 'ul')
   const first = document.createElement('li')
   const second = document.createElement('li')
   first.textContent = match[1]
@@ -59,11 +117,11 @@ function beginNumberedListFromTypedText(element: HTMLElement): boolean {
   second.appendChild(document.createElement('br'))
   list.append(first, second)
   assignFreshEditorIds(list)
-  element.replaceChildren(list)
+  if (lineElement === element) element.replaceChildren(list)
+  else lineElement.replaceWith(list)
   const range = document.createRange()
   range.selectNodeContents(second)
   range.collapse(true)
-  const selection = document.defaultView?.getSelection()
   selection?.removeAllRanges()
   selection?.addRange(range)
   return true
@@ -87,6 +145,7 @@ interface Options {
   iframeRef: RefObject<HTMLIFrameElement | null>
   onCommit: (snapshot: HistorySnapshot) => void
   onReady: (snapshot: HistorySnapshot) => void
+  outerSelectionMode: boolean
 }
 
 interface ResizeState {
@@ -99,7 +158,7 @@ interface ResizeState {
   ratio: number
 }
 
-export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
+export function useIframeEditor({ iframeRef, onCommit, onReady, outerSelectionMode }: Options) {
   const [selected, setSelected] = useState<HTMLElement | null>(null)
   const [hovered, setHovered] = useState<HTMLElement | null>(null)
   const [selectionRect, setSelectionRect] = useState<OverlayRect | null>(null)
@@ -111,6 +170,8 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
   const [isTextEditing, setIsTextEditing] = useState(false)
   const [guides, setGuides] = useState<AlignmentGuide[]>([])
   const selectedRef = useRef<HTMLElement | null>(null)
+  const outerSelectionModeRef = useRef(outerSelectionMode)
+  outerSelectionModeRef.current = outerSelectionMode
   const savedRange = useRef<Range | null>(null)
   const selectionPointerActive = useRef(false)
   const clipboard = useRef<ClipboardPayload | null>(null)
@@ -122,6 +183,8 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     cursorPriority: string
     outline: string
     outlinePriority: string
+    caretColor: string
+    caretColorPriority: string
   } | null>(null)
   const observer = useRef<MutationObserver | null>(null)
   const raf = useRef(0)
@@ -230,19 +293,35 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     // Text selection and box dragging are mutually exclusive, just like PPT:
     // while the caret is active, let the browser own every drag gesture.
     if (!selected || isTextEditing) return
+    let rawLeft = 0
+    let rawTop = 0
+    let rawViewportLeft = 0
+    let rawViewportTop = 0
     const interaction = interact(selected, { context: selected.ownerDocument }).draggable({
       ignoreFrom: '[contenteditable="true"]',
       listeners: {
-        start: () => { ensureAbsolutePosition(selected); setGuides([]); scheduleRefresh() },
+        start: () => {
+          const metrics = ensureAbsolutePosition(selected)
+          const rect = selected.getBoundingClientRect()
+          rawLeft = metrics.x
+          rawTop = metrics.y
+          rawViewportLeft = rect.left
+          rawViewportTop = rect.top
+          setGuides([])
+          scheduleRefresh()
+        },
         move: (event) => {
-          const metrics = getElementMetrics(selected)
           const view = selected.ownerDocument.defaultView
           const currentRect = selected.getBoundingClientRect()
+          rawLeft += event.dx
+          rawTop += event.dy
+          rawViewportLeft += event.dx
+          rawViewportTop += event.dy
           const proposed = {
-            left: currentRect.left + event.dx,
-            top: currentRect.top + event.dy,
-            right: currentRect.right + event.dx,
-            bottom: currentRect.bottom + event.dy,
+            left: rawViewportLeft,
+            top: rawViewportTop,
+            right: rawViewportLeft + currentRect.width,
+            bottom: rawViewportTop + currentRect.height,
             width: currentRect.width,
             height: currentRect.height,
           }
@@ -275,8 +354,8 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
           }))
           const snapX = bestX as { delta: number; target: SnapTarget } | null
           const snapY = bestY as { delta: number; target: SnapTarget } | null
-          selected.style.left = `${metrics.x + event.dx + (snapX?.delta ?? 0)}px`
-          selected.style.top = `${metrics.y + event.dy + (snapY?.delta ?? 0)}px`
+          selected.style.left = `${rawLeft + (snapX?.delta ?? 0)}px`
+          selected.style.top = `${rawTop + (snapY?.delta ?? 0)}px`
           const nextGuides: AlignmentGuide[] = []
           if (snapX) nextGuides.push({
             orientation: 'vertical', position: snapX.target.value,
@@ -311,6 +390,8 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     else editing.element.style.removeProperty('cursor')
     if (editing.outline) editing.element.style.setProperty('outline', editing.outline, editing.outlinePriority)
     else editing.element.style.removeProperty('outline')
+    if (editing.caretColor) editing.element.style.setProperty('caret-color', editing.caretColor, editing.caretColorPriority)
+    else editing.element.style.removeProperty('caret-color')
     editing.element.removeAttribute('data-editor-text-editing')
     editing.element.removeAttribute('data-editor-original-cursor')
     editing.element.removeAttribute('data-editor-original-cursor-priority')
@@ -345,6 +426,8 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
       cursorPriority: target.style.getPropertyPriority('cursor'),
       outline: target.style.getPropertyValue('outline'),
       outlinePriority: target.style.getPropertyPriority('outline'),
+      caretColor: target.style.getPropertyValue('caret-color'),
+      caretColorPriority: target.style.getPropertyPriority('caret-color'),
     }
     target.contentEditable = 'true'
     target.spellcheck = false
@@ -355,6 +438,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     target.setAttribute('data-editor-original-outline-priority', editState.current.outlinePriority)
     target.style.setProperty('cursor', 'text', 'important')
     target.style.setProperty('outline', 'none', 'important')
+    target.style.setProperty('caret-color', 'currentColor', 'important')
     setIsTextEditing(true)
     target.focus({ preventScroll: true })
     requestAnimationFrame(() => target.focus({ preventScroll: true }))
@@ -384,13 +468,16 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
         event.preventDefault()
         event.stopPropagation()
       }
-      if (target && !target.hasAttribute('data-editor-id')) target = target.closest<HTMLElement>('[data-editor-id]')
-      if (target) target = normalizeTextBoxTarget(target)
+      const identifiedTarget = target?.hasAttribute('data-editor-id')
+        ? target
+        : target?.closest<HTMLElement>('[data-editor-id]') ?? null
+      if (outerSelectionModeRef.current || event.altKey) {
+        target = findLayoutContainer(identifiedTarget)
+      } else {
+        target = resolveSelectableTarget(target)
+      }
       if (target && !UNSELECTABLE.has(target.tagName)) {
-        // PPT-like behavior: first click selects the text box; clicking the
-        // already-selected box again enters text editing and shows the caret.
-        if (selectedRef.current === target && isTextEditable(target)) enterTextEdit(target)
-        else selectElement(target)
+        selectElement(target)
       } else {
         selectElement(null)
       }
@@ -401,9 +488,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
         return
       }
       event.preventDefault(); event.stopPropagation()
-      let target = rawTarget
-      if (target && !target.hasAttribute('data-editor-id')) target = target.closest<HTMLElement>('[data-editor-id]')
-      if (target) target = normalizeTextBoxTarget(target)
+      const target = resolveSelectableTarget(rawTarget)
       if (!target || !isTextEditable(target)) return
       enterTextEdit(target)
     }
@@ -466,7 +551,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
       }
       if (event.key === 'Escape' && editState.current) {
         event.preventDefault(); event.stopPropagation(); finishTextEdit(false)
-      } else if (event.key === 'Enter' && editState.current && beginNumberedListFromTypedText(editState.current.element)) {
+      } else if (event.key === 'Enter' && editState.current && beginListFromTypedText(editState.current.element)) {
         event.preventDefault(); event.stopPropagation()
         savedRange.current = null
         setSelectedTextCount(0)
@@ -637,7 +722,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     commit()
   }, [commit, selected])
 
-  const toggleNumberedList = useCallback(() => {
+  const toggleList = useCallback((command: 'insertOrderedList' | 'insertUnorderedList') => {
     if (!selected || !isTextEditable(selected)) return
     const document = selected.ownerDocument
     const view = document.defaultView
@@ -652,15 +737,46 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
     if (!savedRange.current || !selected.contains(range.commonAncestorContainer)) range.selectNodeContents(selected)
     selection?.removeAllRanges()
     selection?.addRange(range)
-    document.execCommand('insertOrderedList', false)
-    selected.querySelectorAll('ol, li').forEach((element) => {
+    const selectedLines = range.toString()
+      .replace(/\u00a0/g, ' ')
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/^(?:\d+[.．、)]|[-*•])\s*/, ''))
+      .filter(Boolean)
+    if (!range.collapsed && selectedLines.length > 1) {
+      const list = document.createElement(command === 'insertOrderedList' ? 'ol' : 'ul')
+      selectedLines.forEach((line) => {
+        const item = document.createElement('li')
+        item.textContent = line
+        list.appendChild(item)
+      })
+      list.style.paddingInlineStart = '1.5em'
+      list.style.listStyleType = command === 'insertOrderedList' ? 'decimal' : 'disc'
+      assignFreshEditorIds(list)
+      const wholeText = selected.innerText.replace(/\u00a0/g, ' ').trim()
+      if (range.toString().replace(/\u00a0/g, ' ').trim() === wholeText) {
+        selected.replaceChildren(list)
+      } else {
+        range.deleteContents()
+        range.insertNode(list)
+      }
+    } else {
+      document.execCommand(command, false)
+    }
+    selected.querySelectorAll('ol, ul, li').forEach((element) => {
       if (!element.hasAttribute('data-editor-id')) assignFreshEditorIds(element)
+    })
+    selected.querySelectorAll<HTMLOListElement | HTMLUListElement>('ol, ul').forEach((list) => {
+      if (!list.style.paddingInlineStart) list.style.paddingInlineStart = '1.5em'
+      if (!list.style.listStyleType) list.style.listStyleType = list.tagName === 'OL' ? 'decimal' : 'disc'
     })
     if (!wasEditing) selected.removeAttribute('contenteditable')
     savedRange.current = null
     setSelectedTextCount(0)
     commit()
   }, [commit, selected])
+
+  const toggleNumberedList = useCallback(() => toggleList('insertOrderedList'), [toggleList])
+  const toggleBulletList = useCallback(() => toggleList('insertUnorderedList'), [toggleList])
 
   const startResize = useCallback((direction: ResizeDirection) => {
     if (!selected) return
@@ -736,8 +852,9 @@ export function useIframeEditor({ iframeRef, onCommit, onReady }: Options) {
 
   return {
     selected, properties, layers, selectionRect, hoverRect, guides, lockAspect, setLockAspect, selectedTextCount, isTextEditing,
+    selectedIsContainer: Boolean(selected && isMultiItemLayoutContainer(selected)),
     bindDocument, captureSnapshot, restoreSnapshot, selectById, clearSelection: () => selectElement(null),
-    updateProperty, transformTextCase, toggleNumberedList, commitProperty: commit, startResize, moveResize, endResize,
+    updateProperty, transformTextCase, toggleNumberedList, toggleBulletList, commitProperty: commit, startResize, moveResize, endResize,
     remove, copy, paste, changeZIndex, nudge, refresh: scheduleRefresh,
   }
 }

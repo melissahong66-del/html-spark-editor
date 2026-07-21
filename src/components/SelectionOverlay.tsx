@@ -6,6 +6,7 @@ interface Props {
   hover: OverlayRect | null
   guides: AlignmentGuide[]
   editing: boolean
+  container: boolean
   onResizeStart: (direction: ResizeDirection) => void
   onResizeMove: (dx: number, dy: number, shiftKey: boolean) => void
   onResizeEnd: () => void
@@ -13,7 +14,7 @@ interface Props {
 
 const DIRECTIONS: ResizeDirection[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
-export function SelectionOverlay({ selection, guides, editing, onResizeStart, onResizeMove, onResizeEnd }: Props) {
+export function SelectionOverlay({ selection, guides, editing, container, onResizeStart, onResizeMove, onResizeEnd }: Props) {
   const cleanupDrag = useRef<(() => void) | null>(null)
 
   useEffect(() => () => cleanupDrag.current?.(), [])
@@ -68,7 +69,7 @@ export function SelectionOverlay({ selection, guides, editing, onResizeStart, on
         ? { left: guide.position, top: guide.start, height: Math.max(1, guide.end - guide.start) }
         : { top: guide.position, left: guide.start, width: Math.max(1, guide.end - guide.start) }}
     />)}
-    {selection && <div className={`selection-overlay${editing ? ' selection-overlay-editing' : ''}`} style={selection}>
+    {selection && <div className={`selection-overlay${editing ? ' selection-overlay-editing' : ''}${container ? ' selection-overlay-container' : ''}`} style={selection}>
       {!editing && visibleDirections.map((direction) => <div
         key={direction}
         className={`resize-handle handle-${direction}`}

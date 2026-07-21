@@ -5,6 +5,7 @@ interface Props {
   hasSelection: boolean
   canUndo: boolean
   canRedo: boolean
+  outerSelectionMode: boolean
   onImport: (file: File) => void
   onUndo: () => void
   onRedo: () => void
@@ -12,6 +13,7 @@ interface Props {
   onDelete: () => void
   onMoveUp: () => void
   onMoveDown: () => void
+  onToggleOuterSelection: () => void
   onExport: () => void
 }
 
@@ -34,6 +36,7 @@ export function Toolbar(props: Props) {
       <button disabled={selectedDisabled} onClick={props.onDelete}>删除</button>
       <button disabled={selectedDisabled} onClick={props.onMoveUp}>上移一层</button>
       <button disabled={selectedDisabled} onClick={props.onMoveDown}>下移一层</button>
+      <button className={props.outerSelectionMode ? 'active-mode' : ''} disabled={!props.hasDocument} onClick={props.onToggleOuterSelection}>选择外层</button>
       <span className="toolbar-spacer" />
       <button className="primary" disabled={!props.hasDocument} onClick={props.onExport}>导出 HTML</button>
     </header>
