@@ -3,6 +3,7 @@ import { Toolbar } from './components/Toolbar'
 import { EditorCanvas } from './components/EditorCanvas'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { ExportCheckDialog } from './components/ExportCheckDialog'
+import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { useHistory } from './hooks/useHistory'
 import { useIframeEditor } from './hooks/useIframeEditor'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
@@ -18,6 +19,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [exportIssues, setExportIssues] = useState<ExportIssue[] | null>(null)
   const [outerSelectionMode, setOuterSelectionMode] = useState(false)
+  const [findReplaceOpen, setFindReplaceOpen] = useState(false)
   const history = useHistory(50)
 
   const handleCommit = useCallback((snapshot: HistorySnapshot) => history.push(snapshot), [history.push])
@@ -75,7 +77,7 @@ export default function App() {
   return <div className="app-shell">
     <Toolbar hasDocument={Boolean(imported)} hasSelection={Boolean(editor.selected)} canUndo={history.canUndo} canRedo={history.canRedo} outerSelectionMode={outerSelectionMode}
       onImport={importFile} onUndo={undo} onRedo={redo} onCopy={editor.copy} onDelete={editor.remove}
-      onMoveUp={() => editor.changeZIndex(1)} onMoveDown={() => editor.changeZIndex(-1)} onToggleOuterSelection={() => { editor.clearSelection(); setOuterSelectionMode((active) => !active) }} onExport={exportFile} />
+      onMoveUp={() => editor.changeZIndex(1)} onMoveDown={() => editor.changeZIndex(-1)} onToggleOuterSelection={() => { editor.clearSelection(); setOuterSelectionMode((active) => !active) }} onFindReplace={() => setFindReplaceOpen(true)} onExport={exportFile} />
     {(notice || error) && <div className={`notice ${error ? 'error' : ''}`}><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setNotice(null); setError(null) }}>×</button></div>}
     <div className="editor-layout">
       <EditorCanvas iframeRef={iframeRef} srcDoc={srcDoc} selectionRect={editor.selectionRect} hoverRect={editor.hoverRect} guides={editor.guides} isTextEditing={editor.isTextEditing} selectedIsContainer={editor.selectedIsContainer}
@@ -85,5 +87,6 @@ export default function App() {
         onToggleNumberedList={editor.toggleNumberedList} onToggleBulletList={editor.toggleBulletList} onCommit={editor.commitProperty} />
     </div>
     {exportIssues && <ExportCheckDialog issues={exportIssues} onBack={() => setExportIssues(null)} onContinue={() => { setExportIssues(null); performExport() }} />}
+    {findReplaceOpen && <FindReplaceDialog onClose={() => setFindReplaceOpen(false)} onCount={editor.countTextMatches} onReplace={editor.replaceText} />}
   </div>
 }

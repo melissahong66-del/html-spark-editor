@@ -135,6 +135,7 @@ interface SnapTarget {
 }
 
 const SNAP_THRESHOLD = 6
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const PIXEL_PROPERTIES = new Set([
   'fontSize', 'lineHeight', 'borderRadius', 'borderWidth',
   'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
@@ -782,6 +783,105 @@ export function useIframeEditor({ iframeRef, onCommit, onReady, outerSelectionMo
   const toggleNumberedList = useCallback(() => toggleList('insertOrderedList'), [toggleList])
   const toggleBulletList = useCallback(() => toggleList('insertUnorderedList'), [toggleList])
 
+  const getSearchableTextNodes = useCallback((): Text[] => {
+    const document = getDocument()
+    if (!document?.body) return []
+    const view = document.defaultView
+    if (!view) return []
+    const nodes: Text[] = []
+    const walker = document.createTreeWalker(document.body, 4)
+    let node = walker.nextNode()
+    while (node) {
+      const text = node as Text
+      const parent = text.parentElement
+      let visible = Boolean(text.data && parent && !parent.closest('script, style, noscript, template'))
+      let current = parent
+      while (visible && current) {
+        const style = view.getComputedStyle(current)
+        if (current.hidden || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') visible = false
+        if (current === document.body) break
+        current = current.parentElement
+      }
+      if (visible) nodes.push(text)
+      node = walker.nextNode()
+    }
+    return nodes
+  }, [getDocument])
+
+  const getSearchableTextGroups = useCallback((): Text[][] => {
+    const document = getDocument()
+    const view = document?.defaultView
+    if (!document || !view) return []
+    const groups = new Map<Element, Text[]>()
+    for (const node of getSearchableTextNodes()) {
+      let root: Element = node.parentElement ?? document.body
+      let current: Element | null = root
+      while (current && current !== document.body) {
+        const display = view.getComputedStyle(current).display
+        if (display !== 'inline' && display !== 'contents') {
+          root = current
+          break
+        }
+        current = current.parentElement
+      }
+      const group = groups.get(root) ?? []
+      group.push(node)
+      groups.set(root, group)
+    }
+    return [...groups.values()]
+  }, [getDocument, getSearchableTextNodes])
+
+  const findGroupMatches = useCallback((nodes: Text[], query: string, caseSensitive: boolean) => {
+    const value = nodes.map((node) => node.data).join('')
+    const matcher = new RegExp(escapeRegExp(query), caseSensitive ? 'g' : 'gi')
+    return [...value.matchAll(matcher)].map((match) => ({ start: match.index, end: match.index + match[0].length }))
+  }, [])
+
+  const countTextMatches = useCallback((query: string, caseSensitive: boolean): number => {
+    if (!query) return 0
+    return getSearchableTextGroups().reduce((total, nodes) => total + findGroupMatches(nodes, query, caseSensitive).length, 0)
+  }, [findGroupMatches, getSearchableTextGroups])
+
+  const replaceText = useCallback((query: string, replacement: string, caseSensitive: boolean, replaceAll: boolean): number => {
+    if (!query) return 0
+    if (editState.current) finishTextEdit(true)
+    let changed = 0
+    for (const nodes of getSearchableTextGroups()) {
+      const matches = findGroupMatches(nodes, query, caseSensitive)
+      const targets = replaceAll ? matches : matches.slice(0, 1)
+      for (const match of targets.reverse()) {
+        let offset = 0
+        let startNode: Text | null = null
+        let endNode: Text | null = null
+        let startOffset = 0
+        let endOffset = 0
+        for (const node of nodes) {
+          const nextOffset = offset + node.data.length
+          if (!startNode && match.start >= offset && match.start <= nextOffset) {
+            startNode = node
+            startOffset = match.start - offset
+          }
+          if (match.end >= offset && match.end <= nextOffset) {
+            endNode = node
+            endOffset = match.end - offset
+            break
+          }
+          offset = nextOffset
+        }
+        if (!startNode || !endNode) continue
+        const range = startNode.ownerDocument.createRange()
+        range.setStart(startNode, startOffset)
+        range.setEnd(endNode, endOffset)
+        range.deleteContents()
+        if (replacement) range.insertNode(startNode.ownerDocument.createTextNode(replacement))
+        changed += 1
+      }
+      if (!replaceAll && changed) break
+    }
+    if (changed) commit()
+    return changed
+  }, [commit, findGroupMatches, finishTextEdit, getSearchableTextGroups])
+
   const startResize = useCallback((direction: ResizeDirection) => {
     if (!selected) return
     const metrics = ensureAbsolutePosition(selected)
@@ -858,7 +958,7 @@ export function useIframeEditor({ iframeRef, onCommit, onReady, outerSelectionMo
     selected, properties, layers, selectionRect, hoverRect, guides, lockAspect, setLockAspect, selectedTextCount, isTextEditing,
     selectedIsContainer: Boolean(selected && isMultiItemLayoutContainer(selected)),
     bindDocument, captureSnapshot, restoreSnapshot, selectById, clearSelection: () => selectElement(null),
-    updateProperty, transformTextCase, toggleNumberedList, toggleBulletList, commitProperty: commit, startResize, moveResize, endResize,
+    updateProperty, transformTextCase, toggleNumberedList, toggleBulletList, countTextMatches, replaceText, commitProperty: commit, startResize, moveResize, endResize,
     remove, copy, paste, changeZIndex, nudge, refresh: scheduleRefresh,
   }
 }

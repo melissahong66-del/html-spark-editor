@@ -105,4 +105,12 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 .export-check-item p { margin: 2px 0 0; color: #786b4b; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .export-check-note { margin: 14px 0; color: #70798a; font-size: 12px; line-height: 1.6; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.find-replace-dialog { width: min(480px, 100%); padding: 20px; background: #fff; border: 1px solid #dfe3eb; border-radius: 12px; box-shadow: 0 24px 70px rgb(15 23 42 / 28%); }
+.find-replace-field { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 10px; margin-bottom: 10px; color: #4f596c; font-size: 13px; }
+.find-replace-field input { min-width: 0; height: 36px; padding: 7px 10px; border: 1px solid #d5d9e2; border-radius: 6px; color: #20283a; }
+.find-replace-field input:focus { outline: 2px solid #bfdbfe; border-color: #3b82f6; }
+.find-replace-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 16px; color: #606a7d; font-size: 12px; }
+.find-replace-options label { display: flex; align-items: center; gap: 6px; }
+.find-replace-options strong { color: #2563eb; }
+.find-replace-message { margin: -6px 0 14px; color: #277044; font-size: 12px; }
 @media (max-width: 950px) { .editor-layout { grid-template-columns: minmax(360px, 1fr) 250px; } .toolbar-brand { display: none; } }
